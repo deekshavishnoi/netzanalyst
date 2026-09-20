@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # --- Azure / Foundry ---------------------------------------------------
     azure_ai_project_endpoint: str | None = None
     azure_openai_endpoint: str | None = None
+    azure_openai_api_version: str | None = Field(
+        None,
+        description="Azure OpenAI API version. Leave unset to use the client's default.",
+    )
 
     # --- non-Azure fallbacks ----------------------------------------------
     openai_api_key: str | None = None

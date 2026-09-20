@@ -24,9 +24,17 @@ dependencies = [
 
 [project.optional-dependencies]
 agents = [
-    "agent-framework",
-    "azure-ai-projects",
-    "azure-identity",
+    # agent-framework is a meta-package that pulls in every optional provider
+    # and takes tens of minutes to resolve. Depend on just what is used.
+    "agent-framework-core>=1.19",
+    "agent-framework-openai>=1.14",
+    # Azure only; agent-framework-azure-ai is still a release candidate while
+    # core is GA, so it is pinned separately and kept out of the default path.
+    "azure-identity>=1.19",
+]
+azure = [
+    "agent-framework-azure-ai>=1.0.0rc6",
+    "azure-ai-projects>=1.0.0",
 ]
 dev = [
     # Ruff covers linting, import sorting and formatting. It deliberately
@@ -69,7 +77,7 @@ files = ["src", "tests"]
 strict = true
 # Third-party packages without bundled type stubs.
 [[tool.mypy.overrides]]
-module = ["psycopg.*", "yaml"]
+module = ["psycopg.*", "yaml", "azure.*", "agent_framework.*", "agent_framework_openai.*"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------
