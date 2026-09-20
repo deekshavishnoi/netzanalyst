@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+
+project     = "netzanalyst"
+environment = "dev"
+location    = "swedencentral"
+
+# Your public IP, so you can reach Postgres from your laptop.
+#   curl -s https://api.ipify.org
+# Leave empty to create no client firewall rule.
+my_ip_address = ""
+
+# Keep the deployment small while developing.
+model_capacity = 10

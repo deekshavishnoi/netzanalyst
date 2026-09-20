@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  mcp-server:
+    name: MCP server (typecheck, build, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
+  python:
+    name: Python (lint, compile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check data agents evals
+      - run: ruff format --check data agents evals
+      - name: Byte-compile
+        run: python -m compileall -q data evals agents
+
+  sql:
+    name: SQL schema applies cleanly
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_USER: ci
+          POSTGRES_DB: netzanalyst
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply schema
+        env:
+          PGPASSWORD: ci
+        run: psql -h localhost -U ci -d netzanalyst -v ON_ERROR_STOP=1 -f sql/001_schema.sql
+      - name: Views are queryable
+        env:
+          PGPASSWORD: ci
+        run: |
+          psql -h localhost -U ci -d netzanalyst -v ON_ERROR_STOP=1 \
+            -c "SELECT * FROM v_data_coverage;" \
+            -c "SELECT * FROM v_renewable_share_monthly LIMIT 1;" \
+            -c "SELECT count(*) FROM generation_source;"
+
+  terraform:
+    name: Terraform (fmt, validate)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      - run: terraform fmt -check -recursive
+      - name: terraform init (no backend, no credentials)
+        run: terraform init -backend=false
+      - run: terraform validate

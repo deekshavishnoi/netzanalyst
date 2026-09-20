@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: netzanalyst-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-netzanalyst}
+      POSTGRES_USER: ${POSTGRES_USER:-netzanalyst}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_RO_PASSWORD: ${POSTGRES_RO_PASSWORD:?set POSTGRES_RO_PASSWORD in .env}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Run once, in alphabetical order, on first start.
+      # Mounted file-by-file on purpose: this repo lives on a volume that
+      # creates AppleDouble "._*" sidecars, and mounting the whole directory
+      # would make Postgres try to execute "._001_schema.sql" as SQL.
+      - ./sql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./sql/002_readonly_user.sh:/docker-entrypoint-initdb.d/002_readonly_user.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-netzanalyst} -d ${POSTGRES_DB:-netzanalyst}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mcp-server:
+    build: ./mcp-server
+    container_name: netzanalyst-mcp
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL_READONLY: postgresql://netzanalyst_ro:${POSTGRES_RO_PASSWORD}@postgres:5432/${POSTGRES_DB:-netzanalyst}
+      MCP_PORT: 3000
+      MCP_MAX_ROWS: ${MCP_MAX_ROWS:-1000}
+      MCP_QUERY_TIMEOUT_MS: ${MCP_QUERY_TIMEOUT_MS:-10000}
+      ENERGY_CHARTS_BASE_URL: ${ENERGY_CHARTS_BASE_URL:-https://api.energy-charts.info}
+    ports:
+      - "${MCP_PORT:-3000}:3000"
+
+volumes:
+  pgdata:
