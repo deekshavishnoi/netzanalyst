@@ -37,14 +37,58 @@ Poland Central — but it is **not on the agent-supported list** for Foundry Age
 Service, which only runs models onboarded and validated for agent workflows.
 Since the whole design runs agents on Agent Service, that matters.
 
-**Recommended:** use **`gpt-5-mini`**, which is agent-supported and available in
-Sweden Central. It plays the same role — the cheap model everywhere — and the
-brief's rule of "upgrade only if evals prove it necessary" is unchanged, just
-with `gpt-5` as the upgrade instead of `gpt-5.4`.
+**Use `gpt-4.1-mini`**, which is agent-supported, the cheapest of the three, and
+has the widest region coverage. Microsoft describes the 4.1 family as
+"cost-effective models for general-purpose agent workloads" — exactly this
+workload. The Terraform default is now `gpt-4.1-mini`.
 
-The Terraform default is already `gpt-5-mini`. **Step 4 below is you confirming
-this in the portal**, because the list changes and the live catalog is the only
-authority.
+The ladder, cheapest first. Start at the bottom, climb only if the evals justify
+it — which *is* the model comparison the brief asks for in section 8:
+
+| Model | Agent-supported | Notes |
+|---|---|---|
+| **`gpt-4.1-mini`** | ✅ | Cheapest, widest regions. **Start here.** |
+| `gpt-5-mini` | ✅ | Stronger reasoning, fewer regions, may need gpt-5 registration |
+| `gpt-5` | ✅ | Most capable, most expensive |
+| `gpt-5.4-mini` | ❌ | Deployable as Azure OpenAI, but not for Agent Service |
+
+## Why your Germany West Central deployment failed
+
+You tried `gpt-4.1-mini` in **Germany West Central** and it did not deploy.
+
+**The region is not the problem.** Microsoft's agent model/region table lists
+`gpt-4.1-mini` as available in `germanywestcentral` under Global Standard. So
+moving to Sweden Central **will not fix this on its own.**
+
+The near-certain cause is the **0 TPM quota** described above. Your subscription
+came from the AI-102/103 certification course, which is typically an Azure Pass
+or trial-type offer — and the documentation says the zero-quota rule applies to
+"Free Trials, Lightweight trial, **and Azure Pass** offer types". Zero quota
+looks exactly like this: the model appears in the catalog, but deployment fails.
+
+### Confirm it in 30 seconds
+
+After `az login`:
+
+```bash
+az cognitiveservices usage list --location germanywestcentral --output table
+```
+
+If the GPT rows show a limit of **0**, it is the quota, not the region. Check
+Sweden Central the same way before assuming a move helps:
+
+```bash
+az cognitiveservices usage list --location swedencentral --output table
+```
+
+And check what offer your subscription actually is:
+
+```bash
+az account show --query "{name:name, id:id, state:state, tenant:tenantId}" --output table
+```
+
+If the limits are 0 in both regions, **step 2 (upgrade to Pay-As-You-Go) is the
+fix**, and it is the only fix. Trying more regions will keep failing.
 
 ### Timing: do not activate the trial yet
 
@@ -94,14 +138,13 @@ resources exist.
 Go to the [Foundry model catalog filtered to agent-supported models](https://ai.azure.com/catalog/models?capabilities=agentsv2)
 and check, for **Sweden Central**:
 
+- [ ] Is `gpt-4.1-mini` listed as agent-supported? (expected: yes — this is the default)
 - [ ] Is `gpt-5-mini` listed as agent-supported? (expected: yes)
 - [ ] Is `gpt-5.4-mini` listed as agent-supported? (expected: no — if it now is,
       tell me and we use it, matching the brief)
-- [ ] Does the `gpt-5` family still need one-time registration on your
-      subscription? If so, request it now — approval is not instant.
-
-Tell me the answers. If both are unavailable, the fallback is `gpt-4.1-mini`,
-which is agent-supported and cheaper again, and we re-plan.
+- [ ] Run the two `az cognitiveservices usage list` commands above and tell me
+      whether the GPT limits are 0 or non-zero. That single answer settles
+      whether the blocker is quota or region.
 
 ### 5. Confirm a hosted agent can be created ⬜
 
@@ -146,8 +189,8 @@ image for Azure. Everything currently runs on the Homebrew Postgres instead.
 | Azure CLI installed | ✅ 2.90.0 |
 | Terraform installed | ⚠️ temp copy only, for validation — not on your PATH |
 | Your public IP for the Postgres firewall | ✅ looked up — put it in your local `terraform.tfvars`, which is gitignored. Deliberately not committed: a home IP does not belong in a public portfolio repo. Get it again any time with `curl -s https://api.ipify.org` |
-| Terraform model default corrected | ✅ now `gpt-5-mini`, with the reasoning in `variables.tf` |
-| Region chosen | ✅ `swedencentral` — carries agent-supported gpt-5-mini, Postgres and Container Apps |
+| Terraform model default corrected | ✅ now `gpt-4.1-mini`, with the full ladder and reasoning in `variables.tf` |
+| Region chosen | ✅ `swedencentral` — carries every model in the ladder, plus Postgres and Container Apps |
 | Budget guardrails in code | ✅ Log Analytics capped at 1 GB/day; Container App scales to zero; Postgres on the smallest burstable tier |
 
 ## What stays true from the brief

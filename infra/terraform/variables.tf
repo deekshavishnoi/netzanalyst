@@ -13,9 +13,14 @@ variable "location" {
   description = <<-EOT
     Azure region. Keep everything in one region to avoid egress charges.
 
-    Sweden Central is chosen because it carries the agent-supported gpt-5-mini
-    AND Postgres Flexible Server AND Container Apps, so the whole stack sits in
-    one region. Verify model availability before changing it.
+    Sweden Central carries every agent-supported model in the ladder below
+    (gpt-4.1-mini, gpt-5-mini, gpt-5) plus Postgres Flexible Server and
+    Container Apps, so the whole stack sits in one region and there is room to
+    change model without moving anything else.
+
+    Note: gpt-4.1-mini is ALSO available in Germany West Central. If a
+    deployment fails there, the cause is almost certainly zero LLM quota on the
+    subscription, not the region — see docs/azure-setup.md.
   EOT
   type        = string
   default     = "swedencentral"
@@ -52,28 +57,33 @@ variable "postgres_storage_mb" {
 variable "model_deployment_name" {
   description = "Name of the model deployment used by every agent."
   type        = string
-  default     = "gpt-5-mini"
+  default     = "gpt-4.1-mini"
 }
 
 variable "model_name" {
   description = <<-EOT
     Foundry model to deploy.
 
-    Default is gpt-5-mini, NOT the gpt-5.4-mini the brief names. Verified
-    2026-09-20 against Microsoft Learn: gpt-5.4-mini is deployable as Global
-    Standard Azure OpenAI (East US 2, Sweden Central, South Central US, Poland
-    Central) but is NOT on the agent-supported list for Foundry Agent Service.
-    Agent Service only runs models onboarded for agents. gpt-5-mini is
-    agent-supported and available in Sweden Central.
+    NOT gpt-5.4-mini, which the brief names. Verified 2026-09-20 against
+    Microsoft Learn: gpt-5.4-mini deploys as Global Standard Azure OpenAI but is
+    NOT on the agent-supported list for Foundry Agent Service, and this design
+    runs agents on Agent Service.
 
-    Re-check before applying, since the list changes. The live check is the
-    Foundry model catalog filtered by "Agent supported":
+    The ladder, cheapest first. Start at the bottom and only climb if the evals
+    justify it, which is exactly the comparison the brief asks for:
+
+      gpt-4.1-mini  agent-supported, cheapest, widest region coverage  <- default
+      gpt-5-mini    agent-supported, stronger reasoning, fewer regions
+      gpt-5         agent-supported, most capable, most expensive
+
+    Re-check before applying; the list changes. The live check is the Foundry
+    catalog filtered to agent-supported models:
       https://ai.azure.com/catalog/models?capabilities=agentsv2
 
-    The gpt-5 family may require one-time registration on the subscription.
+    The gpt-5 family may need one-time registration on the subscription.
   EOT
   type        = string
-  default     = "gpt-5-mini"
+  default     = "gpt-4.1-mini"
 
   validation {
     condition     = can(regex("^gpt-", var.model_name))

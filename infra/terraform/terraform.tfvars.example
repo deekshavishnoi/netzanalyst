@@ -13,8 +13,8 @@ my_ip_address = ""
 # Keep the deployment small while developing.
 model_capacity = 10
 
-# gpt-5-mini rather than the brief's gpt-5.4-mini: the latter is deployable as
+# gpt-4.1-mini rather than the brief's gpt-5.4-mini: the latter is deployable as
 # Azure OpenAI but is not agent-supported by Foundry Agent Service.
 # Re-check in the catalog before applying — see docs/azure-setup.md step 4.
-model_name            = "gpt-5-mini"
-model_deployment_name = "gpt-5-mini"
+model_name            = "gpt-4.1-mini"
+model_deployment_name = "gpt-4.1-mini"
