@@ -317,16 +317,126 @@ secret scanning, so added:
 
 CI now has five jobs: `mcp-server`, `python`, `secrets`, `sql`, `terraform`.
 
+## 9. The `._*` files — root cause and the only real fix
+
+`/Volumes/Deeksha` is **ExFAT**, which cannot store macOS extended attributes
+inline. macOS stamps `com.apple.provenance` on files it creates, so that
+attribute spills into a sidecar `._name` file. Verified directly:
+
+```
+$ xattr -l src            -> com.apple.provenance
+$ diskutil info /Volumes/Deeksha | grep Personality  -> ExFAT
+$ diskutil info / | grep Personality                 -> APFS   (internal disk)
+```
+
+**The common advice does not work here:**
+
+| Suggested fix | Why it does not apply |
+|---|---|
+| `COPYFILE_DISABLE=1` | Only affects `tar`/`cp`, not ordinary file writes |
+| `defaults write ... DSDontWriteNetworkStores` | Only affects `.DS_Store` on network shares |
+| `dot_clean` | Removes them, but they reappear on the next write |
+
+There is **no setting that disables this on ExFAT.** The only real fix is to
+keep the repo on an APFS volume — the internal disk, which had 54 GB free
+against a 862 MB repo.
+
+They are gitignored and never reach a commit, but they are not merely cosmetic.
+They caused **three real problems** in one session:
+
+1. Postgres's init directory runs everything matching `*.sql`, which would have
+   included the binary `._001_schema.sql` and failed the container's first
+   start. `docker-compose.yml` now mounts the two init files individually.
+2. The prompt loader globbed `*.yaml`, picked up `._sql_agent.yaml`, and died on
+   a `UnicodeDecodeError`. The loader now skips `._*` — worth having anyway,
+   since the same thing happens to anyone installing from a macOS-built archive.
+3. `dot_clean` stripped attributes from the extracted Terraform provider
+   binaries, breaking their recorded checksums and making `terraform validate`
+   fail with "missing or corrupted provider plugins". Fixed by deleting
+   `.terraform/` and re-initialising.
+
+## 10. Repo structure, tooling and prompts (Dee's feedback)
+
+### Structure
+
+Moved from the brief's layout to a conventional one, with `git mv` so history
+survives (git recorded every move as `R100`, a 100% similarity rename):
+
+| Before | After | Why |
+|---|---|---|
+| `data/ingest/` | `src/netzanalyst/ingest/` | Python code belongs in one installable package, not in a directory named after data |
+| `mcp-server/` | `services/mcp-server/` | Groups deployable services; `a2a-client` joins it later |
+| `sql/` | `db/migrations/` | Numbered migrations, conventional name |
+| `data/README.md` | `docs/data-sources.md` | It is documentation |
+| `requirements.txt`, `ruff.toml` | `pyproject.toml` | One place for dependencies, lint, types and tests |
+| — | `tests/`, `Makefile` | A test suite, and one entry point for every task |
+
+The point of the package is shared code: `config.py` and the database access
+are written once and imported by ingest, agents and evals, rather than each
+re-reading `os.environ` in its own way.
+
+### Tooling: what was added, and what was deliberately refused
+
+**Refused: Pylint, Black, isort.** Ruff already does all three — it is a
+Black-compatible formatter, an import sorter, and covers most Pylint rules, in
+one fast tool. Running them alongside Ruff means three tools reformatting the
+same files and disagreeing.
+
+**Added, because they were genuinely missing:**
+
+| Tool | What it caught |
+|---|---|
+| **mypy `--strict`** (+ Pydantic plugin) | 8 real gaps: untyped JSON payloads, an untyped `conn` parameter, missing return annotations. Clean now. |
+| **Pydantic / pydantic-settings** | Typed settings that fail at startup rather than mid-run. A validator rejects a "read-only" URL that does not use a `*_ro` role — that would silently remove a security layer. |
+| **gitleaks + detect-private-key** | The brief's hard rule is that no secret reaches the repo; a linter cannot enforce that. |
+| **pytest-cov** | 49% and honestly reported. Most of the gap is network and database I/O. |
+
+> **A mypy lesson worth keeping.** mypy first reported "missing named argument"
+> for every Pydantic model construction. The wrong fix is to sprinkle
+> `# type: ignore`. The right one is `plugins = ["pydantic.mypy"]`, which
+> teaches mypy that fields with defaults are optional. Two ignores were added
+> and then removed once the plugin was enabled.
+
+### Prompts as YAML
+
+Agent prompts now live in `src/netzanalyst/prompts/*.yaml`, validated against a
+Pydantic `PromptSpec` on load, rather than inside Python string literals:
+
+- **Reviewable** — a prompt change is a readable diff.
+- **Versioned** — each carries a `version`, and `identifier()` returns
+  `sql_agent@v3`. That goes into the eval results, so "accuracy rose from 82% to
+  91%" is attributable to a specific revision. This is what makes the brief's
+  before/after comparison meaningful.
+- **Swappable** — comparing two prompts means pointing the loader at a different
+  file, not editing code.
+
+Four prompts written, each encoding the caveats discovered earlier in the
+session, so the agents inherit them rather than rediscovering them:
+
+```
+orchestrator@v1     default  2000 tokens  no tools
+sql_agent@v1        default  1500 tokens  get_schema, run_sql, fetch_energy_charts
+analysis_agent@v1   analysis 3000 tokens  no tools
+verifier_agent@v1   default  1200 tokens  get_schema, run_sql
+```
+
+The tests enforce properties, not just loading: prompts may only reference tools
+the MCP server actually registers; every agent must cap its output tokens (the
+brief's cost rule); and only `analysis_agent` may claim the expensive model.
+
+**26 Python tests + 19 MCP server tests, all passing.**
+
 ## Where things stand
 
 | Layer | State |
 |---|---|
 | Data ingest | ✅ 358,319 rows, cross-validated |
 | Database + views | ✅ schema, read-only role verified |
-| MCP server | ✅ 3 tools, verified over the wire |
-| CI | ✅ written, **not yet run on GitHub** |
-| Terraform | ✅ validates, **nothing applied** |
-| Agents | ⬜ not started |
+| MCP server | ✅ 3 tools, verified over the wire, 19 tests |
+| Settings + prompts | ✅ typed, validated, 26 tests |
+| Tooling + CI | ✅ 5 jobs written, **not yet run on GitHub** |
+| Terraform | ✅ validates, lock committed, **nothing applied** |
+| Agents | ⬜ scaffolding and prompts ready, logic not written |
 | Evals | ⬜ not started |
 | A2A | ⬜ optional, last |
 
