@@ -432,6 +432,153 @@ brief's cost rule); and only `analysis_agent` may claim the expensive model.
 
 **26 Python tests + 19 MCP server tests, all passing.**
 
+# Session 2 — 2026-09-20 (continued): Week 2 begins
+
+## 11. Published to GitHub
+
+Repo: <https://github.com/deekshavishnoi/netzanalyst>, public.
+
+Two things broke on the first push, both worth knowing:
+
+1. **SSH push rejected** — `gh` was configured for SSH but no key was
+   registered. Switched the remote to HTTPS with `gh auth setup-git`.
+2. **`refusing to allow an OAuth App to ... workflow without 'workflow' scope`**
+   — the `gh` token could not create `.github/workflows/ci.yml`. Fixed with
+   `gh auth refresh -h github.com -s workflow`, which needs a browser and so
+   had to be Dee's step.
+
+### CI failed on its first run, for a reason worth recording
+
+Four of five jobs passed. **The secret scan failed — and failed dishonestly.**
+
+`gitleaks-action` scans the commit range `<before>^..<after>`. On a repository's
+*first* push the initial commit has no parent, so:
+
+```
+fatal: ambiguous argument '49006d3^..9dd8703': unknown revision
+WRN scanned ~0 bytes (0)
+WRN no leaks found in partial scan
+```
+
+It scanned **zero bytes**, reported "no leaks found", and still failed the job —
+the worst combination: a red build that would have gone green while checking
+nothing.
+
+Replaced with the pinned gitleaks binary run directly, scanning full history and
+the working tree as separate steps. Verified locally first (6 commits, no leaks,
+exit 0) rather than iterating through CI. **All five jobs now pass.**
+
+## 12. Azure and Foundry: two findings that change the brief
+
+Researched against Microsoft Learn before writing any Foundry code, per the
+brief's own rule. Both findings are blocking, and neither was foreseeable from
+the brief.
+
+### Finding 1 — a free trial cannot deploy any LLM
+
+The **$200 credit and the model quota are separate controls.** Free Trial,
+Lightweight Trial and **Azure Pass** subscriptions start with **0 tokens-per-minute
+for every GPT model in every region**, by design, to prevent abuse.
+
+Dee's subscription came from the AI-102/103 certification course, which is
+typically an Azure Pass — and she had already hit exactly this: `gpt-4.1-mini`
+would not deploy in Germany West Central.
+
+**The region was not the cause.** Microsoft's own table lists `gpt-4.1-mini` as
+available in `germanywestcentral`, so moving to Sweden Central would not have
+fixed it. Diagnostic added to `docs/azure-setup.md`:
+
+```
+az cognitiveservices usage list --location germanywestcentral --output table
+```
+
+A limit of 0 confirms quota, not region. The only fix is upgrading to
+Pay-As-You-Go, which **keeps** the remaining credit.
+
+### Finding 2 — `gpt-5.4-mini` is not agent-supported
+
+The brief specifies `gpt-5.4-mini` everywhere. It **is** deployable as Global
+Standard Azure OpenAI, but it is **not on the agent-supported list** for Foundry
+Agent Service, which only runs models onboarded for agent workflows. The entire
+design runs agents on Agent Service.
+
+Default is now **`gpt-4.1-mini`** — agent-supported, cheapest, widest regions.
+`variables.tf` records the whole ladder, which doubles as the model comparison
+the brief asks for in section 8:
+
+```
+gpt-4.1-mini  agent-supported, cheapest, widest regions   <- default
+gpt-5-mini    agent-supported, stronger reasoning
+gpt-5         agent-supported, most capable
+gpt-5.4-mini  NOT agent-supported
+```
+
+### What the same research confirmed as sound
+
+- **Hosted agents are GA** and explicitly support Microsoft Agent Framework.
+- **Custom remote MCP servers are supported**, authenticated by the agent's
+  managed identity — our MCP server plugs in as designed.
+- **A2A v1.0 is generally available**, with a documented endpoint how-to. The
+  optional last layer is real, not preview guesswork.
+
+## 13. The agents
+
+> **`pip install agent-framework` did not finish in 25 minutes.** It is a
+> meta-package pulling in every optional provider, and the resolver backtracks
+> endlessly. Killed it and installed `agent-framework-core` instead: **seconds.**
+> Worth knowing before you sit watching a progress bar.
+>
+> Also worth knowing: **`agent-framework-core` is 1.19.0 (GA) but
+> `agent-framework-azure-ai` is 1.0.0rc6** — the Azure binding is still a
+> release candidate while the core is stable. It is isolated in its own extra.
+
+Introspected the API rather than recalling it — the lesson from the MCP
+transport mistake — and found Agent Framework ships **native MCP support**:
+
+```
+MCPStreamableHTTPTool(name, url, *, allowed_tools=..., request_timeout=...)
+Agent(client=..., instructions=..., name=..., tools=[...])
+```
+
+So the MCP server connects with **no custom client code at all**, and
+`allowed_tools` maps straight onto the `tools:` list each prompt already
+declares. Tool access becomes least-privilege *by construction* rather than by
+asking the model nicely:
+
+| Agent | Model tier | MCP tools |
+|---|---|---|
+| orchestrator | default | none — delegates only |
+| sql_agent | default | `get_schema`, `run_sql`, `fetch_energy_charts` |
+| analysis_agent | **analysis** | none — computes from rows it is handed |
+| verifier_agent | default | `get_schema`, `run_sql` (**not** the live API) |
+
+The verifier deliberately cannot reach Energy-Charts: it must check against the
+same data the answer came from, not a second source that might disagree for
+unrelated reasons (see the 4.4% biomass difference in `docs/data-sources.md`).
+
+One `OpenAIChatClient` covers every provider — `azure_endpoint` for Foundry with
+`DefaultAzureCredential` so no key ever enters the process, `api_key` for
+OpenAI, `base_url` for Ollama. That is the brief's portability requirement met
+in one class.
+
+### Two bugs the tooling caught before they could bite
+
+- `Settings.azure_openai_api_version` was referenced in the factory but never
+  defined. **mypy caught it**, not a runtime failure on the first Azure call.
+- `Agent` has no `.instructions` attribute; the system prompt lives in
+  `default_options["instructions"]`. **The tests caught it.** I had guessed the
+  attribute rather than checking.
+
+**51 Python tests + 19 MCP server tests passing. Coverage 63%.**
+
+### Not yet done: the agents have never answered a real question
+
+They build, they are wired correctly, and the wiring is tested — but **no model
+has been called.** There is no provider available locally: Ollama is not
+installed, no OpenAI or Anthropic key is set, and Azure is blocked on the quota
+upgrade. Until one exists, "the agents work" is an unproven claim and is not
+recorded as done anywhere.
+
 ## Where things stand
 
 | Layer | State |
@@ -440,9 +587,11 @@ brief's cost rule); and only `analysis_agent` may claim the expensive model.
 | Database + views | ✅ schema, read-only role verified |
 | MCP server | ✅ 3 tools, verified over the wire, 19 tests |
 | Settings + prompts | ✅ typed, validated, 26 tests |
-| Tooling + CI | ✅ 5 jobs written, **not yet run on GitHub** |
+| Tooling + CI | ✅ 5 jobs, **all passing on GitHub** |
+| GitHub | ✅ public at deekshavishnoi/netzanalyst |
 | Terraform | ✅ validates, lock committed, **nothing applied** |
-| Agents | ⬜ scaffolding and prompts ready, logic not written |
+| Agents | 🟡 all four build and are wired, but **have never called a model** |
+| Agent contracts | ✅ typed hand-offs, accuracy rules enforced in the models |
 | Evals | ⬜ not started |
 | A2A | ⬜ optional, last |
 
