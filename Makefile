@@ -68,6 +68,12 @@ tf-validate:  ## Validate the Terraform without credentials
 check: lint test tf-validate  ## Everything CI runs
 
 clean:  ## Remove build artefacts and macOS AppleDouble files
-	rm -rf $(MCP)/dist .pytest_cache .ruff_cache
+	rm -rf $(MCP)/dist .pytest_cache .ruff_cache .mypy_cache .coverage htmlcov
 	find . -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+	# dot_clean strips attributes from extracted Terraform provider binaries,
+	# which breaks the checksums in .terraform.lock.hcl and makes `validate`
+	# fail with "missing or corrupted provider plugins". Remove the provider
+	# cache first; `make tf-validate` re-downloads it.
+	rm -rf infra/terraform/.terraform
 	dot_clean -m . 2>/dev/null || true
+	@echo "Note: run 'make tf-validate' to restore the Terraform provider cache."

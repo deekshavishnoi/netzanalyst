@@ -341,6 +341,12 @@ There is **no setting that disables this on ExFAT.** The only real fix is to
 keep the repo on an APFS volume — the internal disk, which had 54 GB free
 against a 862 MB repo.
 
+**Dee's decision: stay on `/Volumes/Deeksha`.** The sidecars are gitignored and
+never reach a commit, and each of the three problems below now has a permanent
+guard in the code rather than a manual workaround. `make clean` removes the
+Terraform provider cache before running `dot_clean`, precisely so problem 3
+cannot recur.
+
 They are gitignored and never reach a commit, but they are not merely cosmetic.
 They caused **three real problems** in one session:
 
