@@ -1,13 +1,20 @@
-# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
 
 project     = "netzanalyst"
 environment = "dev"
 location    = "swedencentral"
 
 # Your public IP, so you can reach Postgres from your laptop.
-#   curl -s https://api.ipify.org
-# Leave empty to create no client firewall rule.
+# Find it with:  curl -s https://api.ipify.org
+# Leave empty to create no client firewall rule at all.
+# Do not commit a real address: terraform.tfvars is gitignored for this reason.
 my_ip_address = ""
 
 # Keep the deployment small while developing.
 model_capacity = 10
+
+# gpt-5-mini rather than the brief's gpt-5.4-mini: the latter is deployable as
+# Azure OpenAI but is not agent-supported by Foundry Agent Service.
+# Re-check in the catalog before applying — see docs/azure-setup.md step 4.
+model_name            = "gpt-5-mini"
+model_deployment_name = "gpt-5-mini"

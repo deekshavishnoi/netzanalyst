@@ -10,7 +10,13 @@ variable "project" {
 }
 
 variable "location" {
-  description = "Azure region. Keep everything in one region to avoid egress charges."
+  description = <<-EOT
+    Azure region. Keep everything in one region to avoid egress charges.
+
+    Sweden Central is chosen because it carries the agent-supported gpt-5-mini
+    AND Postgres Flexible Server AND Container Apps, so the whole stack sits in
+    one region. Verify model availability before changing it.
+  EOT
   type        = string
   default     = "swedencentral"
 }
@@ -46,17 +52,33 @@ variable "postgres_storage_mb" {
 variable "model_deployment_name" {
   description = "Name of the model deployment used by every agent."
   type        = string
-  default     = "gpt-5.4-mini"
+  default     = "gpt-5-mini"
 }
 
 variable "model_name" {
   description = <<-EOT
-    Foundry model to deploy. Taken from the project brief and NOT yet verified
-    against what the Azure trial can actually deploy — confirm availability in
-    the target region before the first apply.
+    Foundry model to deploy.
+
+    Default is gpt-5-mini, NOT the gpt-5.4-mini the brief names. Verified
+    2026-09-20 against Microsoft Learn: gpt-5.4-mini is deployable as Global
+    Standard Azure OpenAI (East US 2, Sweden Central, South Central US, Poland
+    Central) but is NOT on the agent-supported list for Foundry Agent Service.
+    Agent Service only runs models onboarded for agents. gpt-5-mini is
+    agent-supported and available in Sweden Central.
+
+    Re-check before applying, since the list changes. The live check is the
+    Foundry model catalog filtered by "Agent supported":
+      https://ai.azure.com/catalog/models?capabilities=agentsv2
+
+    The gpt-5 family may require one-time registration on the subscription.
   EOT
   type        = string
-  default     = "gpt-5.4-mini"
+  default     = "gpt-5-mini"
+
+  validation {
+    condition     = can(regex("^gpt-", var.model_name))
+    error_message = "model_name must be a gpt-* deployment name."
+  }
 }
 
 variable "model_capacity" {
