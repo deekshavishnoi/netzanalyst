@@ -14,32 +14,50 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mcp-server
+        working-directory: services/mcp-server
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: mcp-server/package-lock.json
+          cache-dependency-path: services/mcp-server/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
 
   python:
-    name: Python (lint, compile)
+    name: Python (lint, types, tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
-      - run: ruff check data agents evals
-      - run: ruff format --check data agents evals
-      - name: Byte-compile
-        run: python -m compileall -q data evals agents
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Format
+        run: ruff format --check src tests
+      - name: Types
+        run: mypy
+      - name: Tests
+        run: pytest
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gitleaks scans history, not just the tip
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   sql:
     name: SQL schema applies cleanly
@@ -60,7 +78,7 @@ jobs:
       - name: Apply schema
         env:
           PGPASSWORD: ci
-        run: psql -h localhost -U ci -d netzanalyst -v ON_ERROR_STOP=1 -f sql/001_schema.sql
+        run: psql -h localhost -U ci -d netzanalyst -v ON_ERROR_STOP=1 -f db/migrations/001_schema.sql
       - name: Views are queryable
         env:
           PGPASSWORD: ci

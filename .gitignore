@@ -11,7 +11,8 @@
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-.terraform.lock.hcl
+# .terraform.lock.hcl is deliberately NOT ignored: committing it pins provider
+# versions and checksums so CI and every developer resolve the same binaries.
 crash.log
 
 # node
@@ -26,6 +27,10 @@ __pycache__/
 venv/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
 
 # data (raw downloads are reproducible; do not commit)
 data/raw/

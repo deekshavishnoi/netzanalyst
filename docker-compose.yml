@@ -16,8 +16,8 @@ services:
       # Mounted file-by-file on purpose: this repo lives on a volume that
       # creates AppleDouble "._*" sidecars, and mounting the whole directory
       # would make Postgres try to execute "._001_schema.sql" as SQL.
-      - ./sql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
-      - ./sql/002_readonly_user.sh:/docker-entrypoint-initdb.d/002_readonly_user.sh:ro
+      - ./db/migrations/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./db/migrations/002_readonly_user.sh:/docker-entrypoint-initdb.d/002_readonly_user.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-netzanalyst} -d ${POSTGRES_DB:-netzanalyst}"]
       interval: 5s
@@ -25,7 +25,7 @@ services:
       retries: 10
 
   mcp-server:
-    build: ./mcp-server
+    build: ./services/mcp-server
     container_name: netzanalyst-mcp
     restart: unless-stopped
     depends_on:

@@ -34,6 +34,10 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import psycopg
 
 BASE_URL = "https://www.smard.de/app/chart_data"
 REGION = "DE"
@@ -111,14 +115,19 @@ SANITY_BOUNDS = {
 }
 
 
-def fetch_json(url: str, *, retries: int = 4, timeout: int = 30) -> dict:
+def fetch_json(url: str, *, retries: int = 4, timeout: int = 30) -> dict[str, Any]:
     """GET a URL and parse JSON, retrying on transient failures."""
     last: Exception | None = None
     for attempt in range(retries):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=timeout, context=_SSL_CONTEXT) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                payload: Any = json.loads(resp.read().decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise RuntimeError(
+                    f"{url} returned {type(payload).__name__}, expected a JSON object"
+                )
+            return payload
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last = exc
             if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
@@ -172,7 +181,12 @@ def parse_date(text: str) -> dt.datetime:
     return dt.datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=dt.timezone.utc)
 
 
-def load(conn, series: Series, rows: list[tuple[dt.datetime, float | None]], chunk_ms: int) -> int:
+def load(
+    conn: psycopg.Connection[Any],
+    series: Series,
+    rows: list[tuple[dt.datetime, float | None]],
+    chunk_ms: int,
+) -> int:
     """Upsert one chunk. Idempotent: re-running overwrites with fresh values."""
     value_col = "eur_per_mwh" if series.table == "price" else "mwh"
     sql = (

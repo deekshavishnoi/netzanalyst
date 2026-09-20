@@ -90,8 +90,7 @@ docker compose up -d
 
 ```bash
 cp .env.example .env    # then edit the two passwords
-export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
-./scripts/setup-local-db.sh
+make db-up
 ```
 
 Either way you get the schema, the seeded source dimension, and a read-only role
@@ -100,9 +99,9 @@ whose write access is verified to fail.
 ### 2. Load the data
 
 ```bash
-pip install -r data/ingest/requirements.txt
+make setup                 # installs the Python package and Node deps
 set -a; . ./.env; set +a
-python data/ingest/smard.py --from 2024-01-01 --to $(date +%F)
+make ingest                # or: python -m netzanalyst.ingest --from 2024-01-01 --to 2026-09-20
 ```
 
 Roughly 400k rows and about 13 minutes. The loader is idempotent, so
@@ -112,11 +111,8 @@ without writing.
 ### 3. MCP server
 
 ```bash
-cd mcp-server
-npm install
-npm run build
-npm start          # HTTP on :3000, MCP at /mcp, health at /health
-npm run stdio      # or stdio, for Claude Desktop / MCP Inspector
+make mcp-run       # HTTP on :3000, MCP at /mcp, health at /health
+make mcp-stdio     # or stdio, for an MCP client such as Claude Desktop
 ```
 
 Check it:
@@ -126,26 +122,62 @@ curl -s localhost:3000/health
 ```
 
 To use it from an MCP client over stdio, point the client at
-`node /absolute/path/to/mcp-server/dist/index.js --stdio` with
+`node /absolute/path/to/services/mcp-server/dist/index.js --stdio` with
 `DATABASE_URL_READONLY` set in its environment.
 
 ## Repo layout
 
 ```
-data/ingest/     SMARD downloader and loader
-sql/             schema, views, read-only role
-mcp-server/      TypeScript MCP server
-agents/          Python, Microsoft Agent Framework        (next)
-evals/           question set, runner, committed results  (next)
-a2a-client/      agent that calls netzanalyst over A2A    (optional)
-infra/terraform/ Azure infrastructure                     (next)
-docs/            progress log, architecture, cost
+src/netzanalyst/        the Python package — one installable unit
+  ingest/               SMARD downloader and loader
+  agents/               Microsoft Agent Framework agents        (next)
+  evals/                evaluation harness                      (next)
+services/
+  mcp-server/           TypeScript MCP server
+  a2a-client/           agent that calls netzanalyst over A2A   (optional)
+db/migrations/          schema, views, read-only role
+tests/                  pytest suite for the Python package
+evals/                  question set and committed results (data, not code)
+infra/terraform/        Azure infrastructure
+docs/                   progress log, data sources, architecture, cost
+scripts/                local setup helpers
 ```
+
+Python code lives in one installable package so ingest, agents and evals share
+configuration and database access rather than duplicating it. The evaluation
+*harness* is code and lives in the package; the *question set and results* are
+data and live in `evals/`.
+
+### Common tasks
+
+`make help` lists everything. The ones you need most:
+
+```bash
+make setup      # install Python package + Node dependencies
+make hooks      # install pre-commit hooks
+make db-up      # create the local database, schema and read-only role
+make ingest     # load SMARD data
+make mcp-run    # run the MCP server on :3000
+make check      # everything CI runs: lint, types, tests, terraform validate
+```
+
+### Code quality
+
+| Concern | Tool |
+|---|---|
+| Lint, import order, formatting | **Ruff** — deliberately replaces Pylint, Black and isort |
+| Python types | **mypy `--strict`** |
+| TypeScript types | **tsc** |
+| Tests | **pytest** (Python), **node:test** (MCP server) |
+| Settings and data contracts | **Pydantic** |
+| Secrets | **gitleaks** + `detect-private-key`, in pre-commit and CI |
+| Dependencies | `npm audit` in CI |
 
 ## Data
 
 Two public sources, both English, both CC BY 4.0. Full detail, including the
-caveats the agents have to respect, is in [data/README.md](data/README.md).
+caveats the agents have to respect, is in
+[docs/data-sources.md](docs/data-sources.md).
 
 - **SMARD** (Bundesnetzagentur) — bulk hourly history, loaded into Postgres.
   Fetched from the JSON endpoints behind smard.de's charts, which are

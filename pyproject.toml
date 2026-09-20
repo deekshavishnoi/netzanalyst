@@ -1,0 +1,78 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "netzanalyst"
+version = "0.1.0"
+description = "Multi-agent analyst for German electricity data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+dependencies = [
+    "psycopg[binary]>=3.2",
+    # Settings and data contracts. Used for env-var validation now, and for the
+    # structured hand-offs between agents (SQL result -> analysis -> verifier).
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "pyyaml>=6.0",
+    # macOS python.org builds ship without a usable CA store; the ingest builds
+    # its SSL context from this when it is importable. See ingest/smard.py.
+    "certifi>=2024.2.2",
+]
+
+[project.optional-dependencies]
+agents = [
+    "agent-framework",
+    "azure-ai-projects",
+    "azure-identity",
+]
+dev = [
+    # Ruff covers linting, import sorting and formatting. It deliberately
+    # replaces Pylint, Black and isort rather than running alongside them:
+    # three tools formatting the same files only fight each other.
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pre-commit>=3.8",
+]
+
+[project.scripts]
+# `netzanalyst-ingest --from 2024-01-01 --to 2025-12-31`
+netzanalyst-ingest = "netzanalyst.ingest.smard:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/netzanalyst"]
+# Prompt YAML is loaded at runtime via importlib.resources, so it must ship.
+artifacts = ["src/netzanalyst/prompts/*.yaml"]
+
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4"]
+ignore = ["E501"]  # the formatter owns line length
+
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+# Teaches mypy that Pydantic fields with defaults are optional in __init__,
+# and typechecks the models themselves. Without it, every model construction
+# looks like a missing-argument error.
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+strict = true
+# Third-party packages without bundled type stubs.
+[[tool.mypy.overrides]]
+module = ["psycopg.*", "yaml"]
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --cov=netzanalyst --cov-report=term-missing"

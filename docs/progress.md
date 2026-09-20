@@ -1,80 +1,355 @@
 # Progress log
 
-One entry per work session: what was done, what broke, what is next.
+One entry per work session. Each entry records what was built, **what broke and
+how it was diagnosed**, and **what each claim was verified against** — the
+source, the check, and the result. The failures are kept deliberately: they are
+the most useful part to read back.
 
 ---
 
-## 2026-09-20 — Session 1: data layer and MCP server
+# Session 1 — 2026-09-20
 
-**Done**
+Goal: Week 1 of the build plan — data, infrastructure, MCP server.
 
-- Scaffolded the repo to the structure in the brief, `git init` on `main`.
-- Verified both data sources live before writing any code against them:
-  - SMARD `chart_data` endpoints return `{meta_data, series: [[epoch_ms, value]]}`,
-    168 hourly points per weekly chunk.
-  - Energy-Charts API is at **v2** with a different response shape from v1
-    (`data: [{timestamp, values}]`, not `unix_seconds` + `production_types`).
-    Code is written against v2 and the shape is checked at runtime.
-- Confirmed the SMARD filter-ID map from
-  [bundesAPI/smard-api](https://github.com/bundesAPI/smard-api) and sanity-checked
-  magnitudes: load 36–63 GW, solar 0 at night peaking 44 GW, prices −2 to 697 EUR/MWh.
-- Postgres schema (`sql/001_schema.sql`): 5 tables, 8 views, column comments that
-  `get_schema` surfaces to the agents.
-- Local Postgres 16.15 via Homebrew, database created, read-only role
-  `netzanalyst_ro` verified to reject both writes and DDL.
-- `scripts/setup-local-db.sh` makes that setup reproducible in one command.
-- `data/ingest/smard.py`: shape-checked, range-checked, idempotent loader.
-  Loading 2024-01-01 → 2026-09-19, ~23,832 rows per series across 16 series.
-- TypeScript MCP server with all three tools, working over streamable HTTP:
-  `get_schema`, `run_sql`, `fetch_energy_charts`. Verified with real MCP
-  protocol calls (initialize → tools/list → tools/call).
-- 19 unit tests on the SQL guard, all passing, including injection attempts
-  hidden in comments, string literals and dollar-quoted blocks.
+## 1. Environment check
 
-**What broke**
+**Checked first, before writing anything.**
 
-- Python from python.org has no usable CA bundle on macOS, so every HTTPS call
-  failed with `CERTIFICATE_VERIFY_FAILED`. Fixed inside the script by building
-  the SSL context from `certifi` when it is importable, rather than patching
-  Dee's Python install — this also makes the repo work on a stock machine.
-- First ingest run died with `permission denied for table generation`: the
-  schema had been applied as a superuser, so the `netzanalyst` ingest role did
-  not own the tables. Fixed, and `scripts/setup-local-db.sh` now applies the
-  schema **as the owner** so it cannot recur.
-- `node-postgres` turned a DATE into a JS Date and serialised it in UTC, so
-  `2025-06-01` reached the agent as `"2025-05-31T22:00:00.000Z"` — June's number
-  labelled as May. Fixed with explicit type parsers that pass Postgres's own
-  text through untouched. This one would have quietly produced wrong answers.
-- Off-by-one in the ingest date filter: an inclusive upper bound returned 169
-  rows for a 7-day window instead of 168. Now half-open.
+| Tool | Result |
+|---|---|
+| node | v22.23.2 |
+| npm | 10.9.8 |
+| python3 | 3.10.11 (python.org build) |
+| git | 2.50.1 |
+| gh | 2.99.0 |
+| **docker** | **not installed** |
+| **terraform** | **not installed** |
+| **psql** | **not installed** |
+| **az** | **not installed** |
+| brew | 7.0.3 — available |
 
-**Decisions**
+Four of the brief's assumed tools were missing. Rather than guess, this became a
+decision point: Homebrew Postgres (fast, no admin) vs Docker Desktop (matches
+the brief exactly, needs a GUI install). **Dee chose Homebrew Postgres**, with
+`docker-compose.yml` still shipped as the documented portable path.
 
-- **MCP package:** the SDK was split since the brief was written.
-  `@modelcontextprotocol/sdk` (v1.30.0, the brief's choice) is the pre-split
-  package; `@modelcontextprotocol/server` v2 from the same official repo is
-  current and actively released. Dee chose v2. The API is
-  `createMcpHandler` + `registerTool` with zod v4 schemas.
-- **Local Postgres:** Homebrew rather than Docker Desktop, to get moving without
-  an admin install. `docker-compose.yml` is still the documented path in the
-  README and needs testing once Docker is available.
+## 2. Verifying the data sources before writing code against them
 
-**Next**
+The brief names SMARD and Energy-Charts. Neither was taken on trust.
 
-1. Finish and verify the full ingest; spot-check totals against SMARD's website.
-2. Point an MCP client (Claude Desktop or MCP Inspector) at the server and take
-   the **"MCP server tools listed in an MCP client"** screenshot.
-3. Write `evals/questions.jsonl` — the data caveats in `data/README.md` are
-   ready-made trick questions (nuclear after 2024, pumped storage, negative prices).
-4. Terraform skeleton, `terraform plan` only, nothing applied.
-5. **Dee's day-one Azure checks** (blocking for Week 2): confirm `gpt-5.4-mini`
-   can be deployed and a hosted agent created on the trial; set budget alerts at
-   $50 / $100 / $150; fill in the trial start and end dates in the brief.
+### SMARD
 
-**Open questions for Dee**
+- **Claim checked:** is there an API, and what shape is it?
+- **Source:** web search → [bundesAPI/smard-api](https://github.com/bundesAPI/smard-api),
+  then the live endpoints directly.
+- **Result:** there is **no official documented API**. The `chart_data`
+  endpoints are what smard.de's own front-end calls. This is a real project risk
+  and is now written down in `docs/data-sources.md` and the README, with the
+  manual CSV download centre named as the fallback.
 
-- Trial start/end dates are still blank in the brief. Everything has to land
-  before the earlier of the trial end and 23 Oct.
-- Model names `gpt-5.4-mini` / `gpt-5.4` are taken from the brief and have not
-  been checked against what the trial can actually deploy. That is the day-one
-  check above — if they are unavailable, tell me and we re-plan the model choice.
+```
+GET /app/chart_data/1223/DE/index_hour.json
+  -> 612 weekly timestamps, 2014-12-28 .. 2026-09-13
+GET /app/chart_data/1223/DE/1223_DE_hour_1788732000000.json
+  -> {"meta_data": {...}, "series": [[epoch_ms, value|null] x168]}
+```
+
+> **First mistake.** I constructed a data URL from a timestamp I invented rather
+> than one from the index, and got **HTTP 404**. The index is not decoration —
+> the week-start timestamps are the only valid keys. Fixed by always reading
+> `index_hour.json` first, which is what the loader now does.
+
+> **Second mistake, caught by cross-checking.** A search result claimed filter
+> `1223` was "actual load". The authoritative `openapi.yaml` in the bundesAPI
+> repo says `1223` is **lignite**. The data settled it: filter 1223 returns
+> 8–11 GW, and German load runs 35–65 GW. **Never take a filter-ID mapping from
+> a search snippet.** The full verified map is in `docs/data-sources.md`.
+
+**Magnitude sanity check** — one week of hourly data per filter, against what
+these series should physically look like:
+
+| Filter | Series | min | max | mean | Verdict |
+|---|---|---:|---:|---:|---|
+| 410 | Total load | 35,946 | 63,477 | 51,091 | ✅ German load is ~35–70 GW |
+| 4068 | Solar | 0.0 | 44,365 | 11,340 | ✅ zero at night, ~44 GW peak |
+| 4067 | Wind onshore | 545 | 25,736 | 10,215 | ✅ plausible range |
+| 4169 | Price DE-LU | −2.0 | 697.3 | 135.3 | ✅ **negative prices are real** |
+
+### Energy-Charts
+
+- **Claim checked:** the endpoint shape.
+- **Source:** the live OpenAPI spec at `https://api.energy-charts.info/openapi.json`.
+- **Result:** the API is at **v2**, and the v2 response shape is **different
+  from v1**. v1 returns `unix_seconds` + `production_types`; v2 returns
+  `data: [{timestamp, values}]` plus a `series` index and an explicit `license`
+  field. Code written from memory of v1 would have failed at runtime. Written
+  against v2, with a runtime shape check.
+
+### Licences
+
+- SMARD: **CC BY 4.0** — confirmed on the download centre page.
+- Energy-Charts: **CC BY 4.0** — returned in the body of every API response.
+- Both attributions are in the README, `docs/data-sources.md`, and every
+  `run_sql` response.
+
+## 3. Database
+
+Schema: 5 tables, 8 views. The views exist because two things are easy to get
+silently wrong, and an agent should not have to rediscover them per query:
+
+- **Berlin local time.** `ts` is UTC; "July 2025" is a Berlin calendar month.
+  Every view exposes `ts_berlin`.
+  *A generated column will not work here:* `timestamptz AT TIME ZONE 'literal'`
+  is `STABLE`, not `IMMUTABLE`, so Postgres rejects it in `GENERATED ALWAYS AS`.
+  Hence views.
+- **Renewable share.** The denominator excludes pumped storage, matching how
+  SMARD and Fraunhofer ISE report it.
+
+**Read-only role, verified rather than assumed:**
+
+```
+SELECT as netzanalyst_ro   -> 12 rows          ✅
+INSERT as netzanalyst_ro   -> ERROR: cannot execute INSERT in a read-only transaction  ✅
+CREATE TABLE as ..._ro     -> ERROR: cannot execute CREATE TABLE in a read-only transaction  ✅
+```
+
+## 4. Failures during the build, and what fixed them
+
+### 4.1 Every HTTPS call failed — `CERTIFICATE_VERIFY_FAILED`
+
+- **Symptom:** the loader could not reach SMARD, but `curl` to the same URL worked.
+- **Diagnosis:** the difference between the two ruled out the network. macOS
+  python.org builds ship without a usable CA store —
+  `ssl.get_default_verify_paths()` pointed at a `cert.pem` that does not exist.
+  `certifi` *was* installed, just not wired up.
+- **Fix:** build the SSL context from `certifi` when it is importable, falling
+  back to the system default. Verification is never disabled.
+- **Why this way:** the documented macOS fix is to run
+  `Install Certificates.command`, but that patches *your machine* and leaves the
+  repo broken for anyone else. Fixing it in the code fixes it everywhere.
+
+### 4.2 `permission denied for table generation`
+
+- **Symptom:** the first real ingest run died instantly; 0 rows written.
+- **Diagnosis:** I had applied the schema with `psql` as my own superuser
+  account, so the tables were owned by `deek`, not by the `netzanalyst` role the
+  loader connects as.
+- **Fix:** `scripts/setup-local-db.sh` now applies the schema **as the owner**,
+  and the whole setup is one reproducible command instead of ad-hoc `psql`.
+- **Lesson:** this class of bug does not appear under Docker, because there
+  `POSTGRES_USER` owns everything by construction. Setting it up by hand exposed
+  an assumption the compose file was hiding.
+
+### 4.3 June's number labelled as May — the worst bug of the session
+
+- **Symptom:** a query for June 2025 returned `"2025-05-31T22:00:00.000Z"`.
+- **Diagnosis:** `node-postgres` parses a Postgres `DATE` into a JavaScript
+  `Date` at local midnight; `JSON.stringify` then renders it in UTC. In Berlin
+  (UTC+2 in summer) that shifts it back a day.
+- **Why it mattered:** nothing would have errored. An agent would have read
+  "May 31" and confidently reported June's figure as May's. Silent, plausible,
+  wrong — exactly the failure mode this project is meant to avoid.
+- **Fix:** explicit type parsers for `DATE`, `TIMESTAMP` and `TIMESTAMPTZ` that
+  pass Postgres's own text through untouched.
+- **Verified:** `2025-06-01`, `2025-07-01`, `2025-08-01`. ✅
+
+### 4.4 Off-by-one in the ingest window
+
+- **Symptom:** a 7-day range returned **169** rows per series; 7 × 24 = 168.
+- **Diagnosis:** the upper bound was inclusive, so it swept in the first hour of
+  the following day.
+- **Fix:** half-open interval, `start <= ts < end_exclusive`. Re-ran: **168**. ✅
+
+### 4.5 `nuclear: 0 rows` — not a bug
+
+- **Symptom:** the nuclear series loaded 839 rows while every other series
+  loaded 23,832.
+- **Investigated** rather than assumed: the nuclear index's last chunk is
+  **2024-01-28**, and an April 2023 chunk still carries real values (max
+  2,691 MW).
+- **Conclusion:** correct. Germany shut down its last three reactors on
+  15 April 2023 and SMARD stopped publishing the series in January 2024.
+- **Turned into an asset:** "how much nuclear did Germany generate in 2025?" is
+  now a planned trick question for the eval set. The right answer is *zero, and
+  here is why* — not *no data found*.
+
+### 4.6 `brew install terraform` fails
+
+- **Symptom:** the formula is gone from homebrew-core (BUSL licence change), and
+  `hashicorp/tap` wants to build from source via Xcode Command Line Tools.
+- **Fix:** downloaded the official `darwin_arm64` binary from
+  `releases.hashicorp.com` (v1.16.3) to validate the config. Not installed
+  system-wide, so **Terraform is still not on your PATH** — see Next steps.
+
+### 4.7 macOS `._*` files, and the one real problem they caused
+
+`/Volumes/Deeksha` is **ExFAT**, which cannot store macOS extended attributes.
+macOS therefore writes a sidecar AppleDouble file (`._name`) next to every real
+file. There were **1,539** of them. They are junk, they are gitignored, and
+`make clean` removes them — but they regenerate as soon as files are written.
+
+They caused one genuine bug: Postgres's init directory runs everything matching
+`*.sql`, which would have included `._001_schema.sql` — binary junk — and
+failed the container's first start. `docker-compose.yml` therefore mounts the
+two init files **individually** rather than mounting the directory.
+
+## 5. Verifying the data is actually correct
+
+Loading without checking would prove nothing. Two independent checks:
+
+### Against published national figures
+
+| Year | Renewable share (ours) | Total generation (ours) | Published |
+|---|---:|---:|---|
+| 2024 | 60.0% | 427.2 TWh | Fraunhofer ISE ~431 TWh public net generation ✅ |
+| 2025 | 60.2% | 428.0 TWh | consistent ✅ |
+| 2026 | 63.0% | 321.6 TWh (9 months, partial) | — |
+
+Solar, July 2025: **9,056 GWh, 27.6% of generation** — the brief's own example
+question, now answerable.
+
+### Against a completely independent source
+
+August 2026 monthly totals, our SMARD-derived Postgres vs the Energy-Charts API:
+
+| Source | SMARD (GWh) | Energy-Charts (GWh) | Δ |
+|---|---:|---:|---:|
+| solar | 10,931.4 | 10,931.4 | **0** |
+| wind onshore | 7,540.9 | 7,540.9 | **0** |
+| wind offshore | 1,824.1 | 1,824.1 | **0** |
+| lignite | 4,607.8 | 4,607.8 | **0** |
+| hard coal | 2,210.0 | 2,210.0 | **0** |
+| natural gas | 2,902.1 | 2,902.1 | **0** |
+| biomass | 2,840.9 | 2,716.4 | **−4.4%** |
+
+Six of seven match **to the decimal**. That simultaneously confirms the unit
+handling (MWh), the Berlin month boundaries, and the fidelity of the loader.
+Biomass differs by 4.4% — almost certainly a classification difference in how
+biogenic waste is split. Documented so it is not later mistaken for a bug.
+
+**Final load: 358,319 rows**, 2024-01-01 → 2026-09-19, 16 series.
+
+## 6. MCP server
+
+> **Deviation from the brief, flagged and approved.** The brief specifies
+> `@modelcontextprotocol/sdk`. That package (v1.30.0, last released July 2026)
+> is the **pre-split** SDK; the same official repo now publishes
+> `@modelcontextprotocol/server` v2, actively released through September 2026.
+> Dee chose v2.
+
+> **I guessed the transport API and was wrong.** I wrote the HTTP server against
+> a `PerRequestHTTPServerTransport.handleRequest(req, res)` method that does not
+> exist. `tsc` caught it. Reading the shipped `.d.ts` showed the real surface:
+> `createMcpHandler(factory)` returning a **web-standard** `fetch(Request) ->
+> Response`. Rewritten against the actual API, plus a Node↔fetch bridge and
+> `hostHeaderValidationResponse` / `originValidationResponse` for
+> DNS-rebinding protection. **Read the types, do not recall the API.**
+
+`run_sql` is defended in four independent layers, so no single mistake is enough:
+
+1. a `SELECT`-only role with `default_transaction_read_only = on`
+2. an explicit `BEGIN READ ONLY` around every query
+3. a SQL guard that blanks comments, string literals and dollar-quoted blocks
+   *before* scanning for keywords and semicolons
+4. a row cap and statement timeout
+
+**19 unit tests, all passing**, including smuggling attempts:
+
+```
+SELECT 1 -- harmless\n; DROP TABLE generation     -> rejected
+SELECT 1 /* a /* b */ still */ ; DROP TABLE price -> rejected (nested comments)
+SELECT $$x$$ ; DROP TABLE price                   -> rejected (dollar quoting)
+SELECT 'a;b' AS s                                 -> allowed (semicolon in a string)
+SELECT created_at FROM ingest_log                 -> allowed ("create" inside an identifier)
+```
+
+**Verified over the real MCP wire protocol**, not just by unit test —
+`initialize` → `tools/list` → `tools/call` against the running server:
+
+```
+initialize          -> protocolVersion 2025-06-18, serverInfo netzanalyst 0.1.0   ✅
+tools/list          -> get_schema, run_sql, fetch_energy_charts                   ✅
+run_sql (valid)     -> rows, with attribution                                     ✅
+run_sql "DROP ..."  -> "Only read queries are allowed ... starts with \"drop\""   ✅
+fetch_energy_charts -> 48 hourly points, licence string passed through            ✅
+fetch_energy_charts (243-day range) -> rejected with a message naming the limit   ✅
+```
+
+## 7. Terraform
+
+Written, formatted, `init -backend=false` and **`terraform validate` → Success**.
+**Nothing has been applied. No Azure resource exists. Nothing is billing.**
+
+One deprecation was surfaced by `validate` and fixed:
+`enable_rbac_authorization` → `rbac_authorization_enabled`.
+
+`infra/terraform/foundry.tf` is **deliberately empty**. The brief's own rule is
+to check current docs before writing against Foundry preview features. Writing
+`azapi` resources against a remembered preview API version is how you get a plan
+that fails at apply — or worse, one that succeeds and bills.
+
+## 8. Repo structure and tooling (added after Dee's feedback)
+
+Restructured from the brief's layout to a conventional one:
+
+- **`src/netzanalyst/`** — one installable package, so ingest, agents and evals
+  can share configuration and database code instead of duplicating it. Moved
+  with `git mv`, so history is preserved.
+- **`services/`** — deployable services (`mcp-server`, later `a2a-client`).
+- **`db/migrations/`** — numbered SQL migrations.
+- **`tests/`** — pytest, separate from the package.
+- **`pyproject.toml`** — one place for dependencies, lint, types and test config,
+  replacing a loose `requirements.txt` and `ruff.toml`.
+- **`Makefile`** — one entry point: `make setup`, `make db-up`, `make check`.
+
+On tooling: **Ruff replaces Pylint, Black and isort** rather than running
+alongside them — it is the same checks in one fast tool, and three formatters on
+the same files only fight. What was actually missing was type checking and
+secret scanning, so added:
+
+- **mypy `--strict`** — found 8 real gaps, all fixed, now clean.
+- **Pydantic + pydantic-settings** — for settings validation and, next, the
+  structured hand-offs between agents.
+- **pre-commit** with gitleaks and `detect-private-key` — the brief's hard rule
+  is that no secret reaches the repo, and a linter cannot enforce that.
+- **pytest-cov** — currently 29%, honestly reported; most of the uncovered code
+  is network and database I/O.
+
+CI now has five jobs: `mcp-server`, `python`, `secrets`, `sql`, `terraform`.
+
+## Where things stand
+
+| Layer | State |
+|---|---|
+| Data ingest | ✅ 358,319 rows, cross-validated |
+| Database + views | ✅ schema, read-only role verified |
+| MCP server | ✅ 3 tools, verified over the wire |
+| CI | ✅ written, **not yet run on GitHub** |
+| Terraform | ✅ validates, **nothing applied** |
+| Agents | ⬜ not started |
+| Evals | ⬜ not started |
+| A2A | ⬜ optional, last |
+
+## Next steps
+
+1. Point an MCP client at the server and take the **"MCP server tools listed in
+   an MCP client"** screenshot for the documentation checklist.
+2. Write `evals/questions.jsonl`. The caveats in `docs/data-sources.md` are
+   ready-made trick questions: nuclear after 2024, pumped storage, negative
+   prices, partial months.
+3. Build one agent end to end through the MCP server, then split into the four.
+4. Install Terraform properly (it is only in a temp directory right now) and
+   Docker, then test the `docker compose up` path.
+5. Push to GitHub and confirm CI passes.
+
+## Open items for Dee
+
+- **Trial dates are still blank in the brief.** Everything must land before the
+  earlier of the trial end and 23 Oct.
+- **Day-one Azure checks, blocking for Week 2:** confirm `gpt-5.4-mini` can be
+  deployed and a hosted agent created on the trial; set budget alerts at
+  $50 / $100 / $150.
+- **Model names are unverified.** `gpt-5.4-mini` and `gpt-5.4` come from the
+  brief and have not been checked against what the trial can deploy. They are
+  currently only defaults in `variables.tf`. If they are unavailable, say so and
+  we re-plan the model choice.

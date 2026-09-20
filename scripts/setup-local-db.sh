@@ -55,7 +55,7 @@ fi
 # write to. Applying it as a superuser instead leaves the tables owned by that
 # superuser and the ingest fails with "permission denied for table generation".
 echo "==> applying schema as $OWNER"
-PGPASSWORD="$OWNER_PW" psql -h 127.0.0.1 -U "$OWNER" -d "$DB" -q -v ON_ERROR_STOP=1 -f sql/001_schema.sql
+PGPASSWORD="$OWNER_PW" psql -h 127.0.0.1 -U "$OWNER" -d "$DB" -q -v ON_ERROR_STOP=1 -f db/migrations/001_schema.sql
 
 echo "==> creating read-only role netzanalyst_ro"
 psql -d "$DB" -q -v ON_ERROR_STOP=1 <<SQL
@@ -85,4 +85,4 @@ echo "    ok: writes are rejected"
 
 echo
 echo "Database $DB is ready. Next:"
-echo "  python data/ingest/smard.py --from 2024-01-01 --to \$(date +%F)"
+echo "  python -m netzanalyst.ingest --from 2024-01-01 --to \$(date +%F)"

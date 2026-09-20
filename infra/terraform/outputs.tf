@@ -39,13 +39,13 @@ output "next_steps" {
   value       = <<-EOT
     1. Build and push the MCP image:
          az acr login --name ${azurerm_container_registry.main.name}
-         docker build -t ${azurerm_container_registry.main.login_server}/netzanalyst-mcp:v1 ./mcp-server
+         docker build -t ${azurerm_container_registry.main.login_server}/netzanalyst-mcp:v1 ./services/mcp-server
          docker push ${azurerm_container_registry.main.login_server}/netzanalyst-mcp:v1
          az containerapp update -n ${azurerm_container_app.mcp.name} \
            -g ${azurerm_resource_group.main.name} \
            --image ${azurerm_container_registry.main.login_server}/netzanalyst-mcp:v1
     2. Apply the schema and create the read-only role against ${azurerm_postgresql_flexible_server.main.fqdn}.
-    3. Load the data with data/ingest/smard.py.
+    3. Load the data with python -m netzanalyst.ingest.
     4. STOP THE POSTGRES SERVER when you are not using it:
          az postgres flexible-server stop -n ${azurerm_postgresql_flexible_server.main.name} -g ${azurerm_resource_group.main.name}
   EOT
