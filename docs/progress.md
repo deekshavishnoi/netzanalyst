@@ -579,6 +579,76 @@ installed, no OpenAI or Anthropic key is set, and Azure is blocked on the quota
 upgrade. Until one exists, "the agents work" is an unproven claim and is not
 recorded as done anywhere.
 
+## 14. The evaluation question set
+
+Built without a model, since none is available yet — and it is the piece that
+makes everything afterwards measurable.
+
+**33 questions**: 12 lookups, 6 comparisons, 7 trends, 8 traps. Within the
+brief's 30–50, and the mix it asks for.
+
+**No answer is hand-written.** Each question carries the SQL that produced it,
+and `python -m netzanalyst.evals.generate` runs that SQL against the database.
+A question set whose answers cannot be recomputed rots silently the first time
+the data is reloaded; this one regenerates.
+
+Spot-check of the grounded values, against what these figures should be:
+
+| Question | Answer | Plausible? |
+|---|---:|---|
+| Solar share, July 2025 | 27.60% | ✅ the brief's own example |
+| Total generation, 2025 | 428.0 TWh | ✅ |
+| Renewable share, 2025 | 60.2% | ✅ |
+| Peak load, 2025 | 75,635 MW | ✅ |
+| Average price, 2025 | €89.32/MWh | ✅ |
+| Negative-price hours, 2025 | 573 | ✅ 6.5% of the year |
+| Peak solar hour, 2025 | 52,132 MW | ✅ |
+
+### Two problems found while grounding the answers
+
+Both would have produced a question set that quietly graded the wrong thing.
+
+**`zero-solar-hours-2025` returned 0, and that was correct.** Solar in this data
+is *never exactly zero*: the 2025 minimum is 4 MW and a typical summer night
+sits near 60 MW.
+
+```
+exactly_zero | nulls | tiny_positive | min_val | total
+           0 |     0 |          2124 |       4 |  8760
+
+2025-06-15 02:00 -> 53.0 MW      <- the middle of a June night
+```
+
+So "how many hours was solar zero?" had the answer 0 for a reason no model would
+guess, and any sensible answer ("about half the year, at night") would be marked
+wrong. Replaced with **`min-solar-hour-2025`**, which catches the same wrong
+assumption — reasoning "the sun is down, so zero" instead of reading the data —
+but has an answer that can actually be defended.
+
+**A near-zero expected value cannot use a relative tolerance.** The
+2024→2025 renewable share change is **0.27 percentage points**. At ±5% relative
+that demands ±0.013 — effectively exact, so the question was unpassable. Added
+`tolerance_abs` to the schema, set to 0.5 points here.
+
+### Scoring distinguishes a refusal from a zero
+
+These are different failures and are scored separately:
+
+- **Answering `0` to an unanswerable question is wrong** (solar in 2030).
+- **Refusing a genuine zero is also wrong** (nuclear in 2025 is zero *because
+  the reactors are gone*, not unanswerable).
+
+Every trap additionally requires explanatory phrases, because the point of a
+trap is the reasoning, not the number. Nuclear is asked for two different
+periods so the explanation cannot be memorised for one date.
+
+The tests treat the question set as a build artefact in its own right: unique
+ids, all four categories present, every numeric answer reproducible from its
+SQL, every trap carrying a note and required phrases, and near-zero answers
+using an absolute tolerance.
+
+**62 Python tests + 19 MCP server tests passing.**
+
 ## Where things stand
 
 | Layer | State |
@@ -592,20 +662,25 @@ recorded as done anywhere.
 | Terraform | ✅ validates, lock committed, **nothing applied** |
 | Agents | 🟡 all four build and are wired, but **have never called a model** |
 | Agent contracts | ✅ typed hand-offs, accuracy rules enforced in the models |
-| Evals | ⬜ not started |
+| Evals | 🟡 33 questions grounded and committed; **runner not written** |
 | A2A | ⬜ optional, last |
 
 ## Next steps
 
-1. Point an MCP client at the server and take the **"MCP server tools listed in
+**Blocked on a model provider.** Dee chose to wait for Azure rather than install
+Ollama, so the agents cannot be run until the subscription is upgraded and
+`gpt-4.1-mini` is deployed. Until then:
+
+1. Write the eval runner and scorer — it can be tested against recorded
+   responses without calling a model.
+2. Write the orchestration workflow wiring with `WorkflowBuilder`.
+3. Point an MCP client at the server and take the **"MCP server tools listed in
    an MCP client"** screenshot for the documentation checklist.
-2. Write `evals/questions.jsonl`. The caveats in `docs/data-sources.md` are
-   ready-made trick questions: nuclear after 2024, pumped storage, negative
-   prices, partial months.
-3. Build one agent end to end through the MCP server, then split into the four.
-4. Install Terraform properly (it is only in a temp directory right now) and
-   Docker, then test the `docker compose up` path.
-5. Push to GitHub and confirm CI passes.
+4. Install Terraform properly (it is only in a temp directory) and Docker, then
+   test the `docker compose up` path.
+
+Once Azure is unblocked: deploy the model, run the agents end to end, write
+`foundry.tf`, and take the first real evaluation baseline.
 
 ## Open items for Dee
 
