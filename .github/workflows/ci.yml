@@ -51,13 +51,31 @@ jobs:
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.24.3
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # gitleaks scans history, not just the tip
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0   # full history, not just the tip
+
+      # The gitleaks GitHub Action is deliberately not used here. It scans the
+      # range <before>^..<after>, which fails on a repository's first push
+      # because the initial commit has no parent:
+      #   fatal: ambiguous argument '<sha>^..<sha>': unknown revision
+      # Running the binary directly scans the whole history every time, which
+      # is both simpler and stricter.
+      - name: Install gitleaks
+        run: |
+          curl -sSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks version
+
+      - name: Scan full git history
+        run: ./gitleaks git . --redact --verbose --exit-code 1
+
+      - name: Scan the working tree
+        run: ./gitleaks dir . --redact --verbose --exit-code 1
 
   sql:
     name: SQL schema applies cleanly
